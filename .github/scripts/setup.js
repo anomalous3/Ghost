@@ -52,47 +52,120 @@ async function runAndStream(command, args, options) {
 
     // Only reset data if we are using Docker
     let resetData = false;
+    let setupComplete = false;
 
-    if (!dbClient.includes('mysql')) {
-        let mysqlSetup = false;
-        console.log(chalk.blue(`Attempting to setup MySQL via Docker`));
+    // Check for existing database configuration
+    if (!dbClient || !dbClient.includes('mysql') && !dbClient.includes('sqlite')) {
+        console.log(chalk.blue('No database configured. Setting up development database...'));
+        
+        // Check if Docker is available
+        let dockerAvailable = false;
         try {
-            await runAndStream('yarn', ['docker:reset'], {cwd: path.join(__dirname, '../../')});
-            mysqlSetup = true;
+            await runAndStream('docker', ['--version'], {stdio: 'ignore'});
+            dockerAvailable = true;
         } catch (err) {
-            console.error(chalk.red('Failed to run MySQL Docker container'), err);
-            console.error(chalk.red('Hint: is Docker installed and running?'));
+            console.log(chalk.yellow('Docker not found - will use SQLite'));
         }
 
-        if (mysqlSetup) {
-            resetData = true;
-            console.log(chalk.blue(`Adding MySQL credentials to config.local.json`));
-            const currentConfigPath = path.join(coreFolder, 'config.local.json');
-
-            let currentConfig;
+        let dbChoice = 'sqlite';
+        if (dockerAvailable && !process.argv.includes('--sqlite')) {
             try {
-                currentConfig = require(currentConfigPath);
+                const response = await inquirer.prompt({
+                    type: 'list',
+                    name: 'database',
+                    message: 'Choose database for development:',
+                    choices: [
+                        {name: 'SQLite (recommended for development)', value: 'sqlite'},
+                        {name: 'MySQL via Docker', value: 'mysql'}
+                    ],
+                    default: 'sqlite'
+                });
+                dbChoice = response.database;
             } catch (err) {
-                currentConfig = {};
+                console.log(chalk.yellow('Interactive mode unavailable, using SQLite'));
+                dbChoice = 'sqlite';
             }
+        }
 
-            currentConfig.database = {
-                client: 'mysql',
-                docker: true,
-                connection: {
-                    host: '127.0.0.1',
-                    user: 'root',
-                    password: 'root',
-                    database: 'ghost'
-                }
+        if (dbChoice === 'sqlite') {
+            console.log(chalk.blue('Setting up SQLite database...'));
+            
+            // Create SQLite configuration
+            const configPath = path.join(coreFolder, 'config.development.json');
+            const sqliteConfig = {
+                enableDeveloperExperiments: true,
+                database: {
+                    client: 'sqlite3',
+                    connection: {
+                        filename: 'content/data/ghost-dev.db'
+                    }
+                },
+                server: {
+                    port: 2368,
+                    host: '127.0.0.1'
+                },
+                url: 'http://localhost:2368'
             };
 
             try {
-                await fs.writeFile(currentConfigPath, JSON.stringify(currentConfig, null, 4));
+                await fs.writeFile(configPath, JSON.stringify(sqliteConfig, null, 4));
+                console.log(chalk.green('SQLite configuration written to config.development.json'));
+                
+                // Ensure content/data directory exists
+                const dataDir = path.join(coreFolder, 'content/data');
+                await fs.mkdir(dataDir, {recursive: true});
+                setupComplete = true;
             } catch (err) {
-                console.error(chalk.red('Failed to write config.local.json'), err);
-                console.log(chalk.yellow(`Please add the following to config.local.json:\n`), JSON.stringify(currentConfig, null, 4));
+                console.error(chalk.red('Failed to create SQLite configuration'), err);
                 process.exit(1);
+            }
+        } else {
+            // MySQL setup
+            let mysqlSetup = false;
+            console.log(chalk.blue('Setting up MySQL via Docker...'));
+            try {
+                await runAndStream('yarn', ['docker:reset'], {cwd: path.join(__dirname, '../../')});
+                mysqlSetup = true;
+            } catch (err) {
+                console.error(chalk.red('Failed to run MySQL Docker container'), err);
+                console.error(chalk.red('Hint: is Docker installed and running?'));
+                console.log(chalk.yellow('Falling back to SQLite...'));
+                // Fallback to SQLite if Docker fails
+                process.argv.push('--sqlite');
+                return;
+            }
+
+            if (mysqlSetup) {
+                resetData = true;
+                console.log(chalk.blue('Adding MySQL credentials to config.local.json'));
+                const currentConfigPath = path.join(coreFolder, 'config.local.json');
+
+                let currentConfig;
+                try {
+                    currentConfig = require(currentConfigPath);
+                } catch (err) {
+                    currentConfig = {};
+                }
+
+                currentConfig.database = {
+                    client: 'mysql',
+                    docker: true,
+                    connection: {
+                        host: '127.0.0.1',
+                        user: 'root',
+                        password: 'root',
+                        database: 'ghost'
+                    }
+                };
+
+                try {
+                    await fs.writeFile(currentConfigPath, JSON.stringify(currentConfig, null, 4));
+                    setupComplete = true;
+                } catch (err) {
+                    console.error(chalk.red('Failed to write config.local.json'), err);
+                    console.log(chalk.yellow('Please add the following to config.local.json:\n'), JSON.stringify(currentConfig, null, 4));
+                    process.exit(1);
+                }
             }
         }
     } else {
@@ -122,8 +195,11 @@ async function runAndStream(command, args, options) {
         }
     }
 
-    console.log(chalk.blue(`Running knex-migrator init`));
+    console.log(chalk.blue('Running knex-migrator init'));
     await runAndStream('yarn', ['knex-migrator', 'init'], {cwd: coreFolder});
+    
+    console.log(chalk.blue('Building admin interface and apps...'));
+    await runAndStream('yarn', ['build'], {cwd: path.join(__dirname, '../../')});
     if (process.argv.includes('--no-seed')) {
         console.log(chalk.yellow(`Skipping seed data`));
         console.log(chalk.yellow(`Done`));

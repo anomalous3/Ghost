@@ -80,6 +80,68 @@ Check out our [official documentation](https://ghost.org/docs/) for more informa
 
 For anyone wishing to contribute to Ghost or to hack/customize core files we recommend following our full development setup guides: [Contributor guide](https://ghost.org/docs/contributing/) • [Developer setup](https://ghost.org/docs/install/source/)
 
+## Development from source
+
+### Requirements
+
+- **Node.js v22.13.1 or higher** (use `node --version` to check)
+- **Docker** (optional - SQLite works fine for development)
+- **Git** for cloning the repository
+
+### Quick development setup
+
+```bash
+# 1. Clone and navigate to repository
+git clone https://github.com/TryGhost/Ghost.git
+cd Ghost
+
+# 2. Install dependencies (ignore engine warnings)
+yarn install --ignore-engines
+
+# 3. Run automated setup (chooses SQLite by default)
+yarn setup
+
+# 4. Start development server
+cd ghost/core
+yarn dev
+```
+
+The setup script will:
+- Offer SQLite (recommended) or MySQL via Docker
+- Initialize the database with required tables
+- Build the admin interface and all components
+- Generate sample data for development
+
+After setup, Ghost will be running at:
+- **Frontend**: http://localhost:2368
+- **Admin**: http://localhost:2368/ghost
+
+### Manual database options
+
+Force SQLite (no Docker required):
+```bash
+yarn setup --sqlite
+```
+
+Use MySQL via Docker:
+```bash
+yarn setup  # Choose MySQL option when prompted
+```
+
+### Node.js version management
+
+If you have an older Node.js version, install v22+ using:
+
+```bash
+# Using Homebrew (macOS)
+brew install node@22
+export PATH="/usr/local/opt/node@22/bin:$PATH"
+
+# Using nvm
+nvm install 22
+nvm use 22
+```
+
 &nbsp;
 
 # Ghost sponsors

@@ -1,3 +1,14 @@
 {
-    "enableDeveloperExperiments": true
+    "enableDeveloperExperiments": true,
+    "database": {
+        "client": "sqlite3",
+        "connection": {
+            "filename": "content/data/ghost-dev.db"
+        }
+    },
+    "server": {
+        "port": 2368,
+        "host": "127.0.0.1"
+    },
+    "url": "http://localhost:2368"
 }
