@@ -1,8 +1,7 @@
 const _ = require('lodash');
 const knex = require('knex');
 const path = require('path');
-const fs = require('fs');
-const { createClient } = require('@libsql/client');
+const {createClient} = require('@libsql/client');
 
 const logging = require('@tryghost/logging');
 const config = require('../../../shared/config');
@@ -68,7 +67,6 @@ class MultiSiteConnectionManager {
                     }
                 };
             }
-
         } else if (client === 'libsql') {
             // LibSQL configuration for production multi-tenancy
             dbConfig.connection.database = `ghost_site_${siteId}`;
@@ -156,7 +154,6 @@ class MultiSiteConnectionManager {
             // Execute the cross-site query
             const result = await libsqlClient.execute(query);
             return result.rows;
-
         } catch (error) {
             logging.error(`[MultiSite] Cross-site query failed: ${error.message}`);
             throw error;
