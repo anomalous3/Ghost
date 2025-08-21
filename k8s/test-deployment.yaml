@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: libsql-test
+  namespace: ghost-multisite
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: libsql-test
+  template:
+    metadata:
+      labels:
+        app: libsql-test
+    spec:
+      containers:
+      - name: libsql-server
+        image: alpine:latest
+        ports:
+        - containerPort: 8080
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Install dependencies
+          apk add --no-cache curl sqlite
+          
+          # Download and install libSQL server
+          cd /tmp
+          curl -L https://github.com/tursodatabase/libsql/releases/download/libsql-server-v0.24.32/libsql-server-x86_64-unknown-linux-gnu.tar.xz -o libsql.tar.xz
+          tar -xf libsql.tar.xz
+          ls -la libsql-server-x86_64-unknown-linux-gnu/
+          cp libsql-server-x86_64-unknown-linux-gnu/sqld /usr/local/bin/sqld
+          chmod +x /usr/local/bin/sqld
+          echo "libSQL binary installed: $(which sqld)"
+          sqld --version
+          
+          # Create test database
+          sqlite3 /tmp/test.db "
+            CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, content TEXT);
+            INSERT INTO posts (title, content) VALUES ('K8s Test', 'Running in Kubernetes!');
+          "
+          
+          echo "Starting libSQL server..."
+          exec sqld --http-listen-addr 0.0.0.0:8080 --db-path /tmp/test.db
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: libsql-test-service
+  namespace: ghost-multisite
+spec:
+  selector:
+    app: libsql-test
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: LoadBalancer

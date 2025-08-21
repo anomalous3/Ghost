@@ -1,0 +1,248 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ghost-creator1-test
+  namespace: ghost-multisite
+  labels:
+    app: ghost-multisite-test
+    creator: creator1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ghost-multisite-test
+      creator: creator1
+  template:
+    metadata:
+      labels:
+        app: ghost-multisite-test
+        creator: creator1
+    spec:
+      containers:
+      - name: ghost-libsql-colocated
+        image: node:18-alpine
+        ports:
+        - containerPort: 2368
+          name: ghost-http
+        - containerPort: 8081
+          name: libsql-http
+        env:
+        - name: NODE_ENV
+          value: development
+        - name: CREATOR_ID
+          value: creator1
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "🚀 Starting co-located Ghost + libSQL for creator1..."
+          
+          # Install system dependencies
+          apk add --no-cache sqlite curl git
+          
+          # Download and install libSQL server
+          cd /tmp
+          echo "📥 Downloading libSQL server..."
+          curl -L https://github.com/tursodatabase/libsql/releases/download/libsql-server-v0.24.32/libsql-server-x86_64-unknown-linux-gnu.tar.xz -o libsql.tar.xz
+          tar -xf libsql.tar.xz
+          cp libsql-server-x86_64-unknown-linux-gnu/sqld /usr/local/bin/sqld
+          chmod +x /usr/local/bin/sqld
+          echo "✅ libSQL installed: $(sqld --version)"
+          
+          # Create working directory
+          mkdir -p /app/data
+          cd /app
+          
+          # Create test database with sample data
+          echo "🗄️ Creating creator1 test database..."
+          sqlite3 /app/data/creator1.db "
+            CREATE TABLE posts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT NOT NULL,
+              slug TEXT NOT NULL UNIQUE,
+              content TEXT,
+              status TEXT DEFAULT 'published',
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE TABLE members (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              email TEXT NOT NULL UNIQUE,
+              name TEXT,
+              status TEXT DEFAULT 'free',
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            INSERT INTO posts (title, slug, content) VALUES 
+            ('Welcome to Creator1 on K8s', 'welcome-k8s', 'Ghost + libSQL running in Kubernetes!'),
+            ('Multi-Site Test Post', 'multisite-test', 'Testing the co-located architecture'),
+            ('Production Ready', 'production-ready', 'This setup scales to thousands of creators');
+            
+            INSERT INTO members (email, name, status) VALUES 
+            ('fan@creator1.com', 'Creator1 Fan', 'free'),
+            ('premium@creator1.com', 'Premium Member', 'paid'),
+            ('subscriber@creator1.com', 'Newsletter Subscriber', 'free');
+          "
+          
+          # Start libSQL server in background
+          echo "🗄️ Starting libSQL server on port 8081..."
+          sqld \
+            --http-listen-addr 0.0.0.0:8081 \
+            --db-path /app/data/creator1.db \
+            --enable-bottomless-replication=false &
+          
+          LIBSQL_PID=$!
+          echo "✅ libSQL started (PID: $LIBSQL_PID)"
+          
+          # Wait for libSQL to be ready
+          sleep 5
+          
+          # Test libSQL connection
+          echo "🔍 Testing libSQL API..."
+          curl -s -X POST http://localhost:8081/v2/pipeline \
+            -H "Content-Type: application/json" \
+            -d '{"requests": [{"type": "execute", "stmt": {"sql": "SELECT COUNT(*) as count FROM posts"}}]}' \
+            && echo "" && echo "✅ libSQL API working!"
+          
+          # Create a simple Node.js server to simulate Ghost's behavior
+          echo "👻 Creating Ghost-like server..."
+          cat > server.js << 'EOF'
+          const http = require('http');
+          const { createClient } = require('@libsql/client');
+          
+          // Install libSQL client
+          const libsql = createClient({
+            url: 'http://localhost:8081'
+          });
+          
+          const server = http.createServer(async (req, res) => {
+            res.setHeader('Content-Type', 'application/json');
+            
+            if (req.url === '/') {
+              res.writeHead(200);
+              res.end(JSON.stringify({
+                message: 'Creator1 Ghost + libSQL Co-located!',
+                creator: 'creator1',
+                architecture: 'single-container',
+                database: 'libSQL',
+                status: 'running'
+              }));
+            } else if (req.url === '/posts') {
+              try {
+                const result = await libsql.execute('SELECT * FROM posts ORDER BY created_at DESC');
+                res.writeHead(200);
+                res.end(JSON.stringify({
+                  creator: 'creator1',
+                  posts: result.rows
+                }));
+              } catch (error) {
+                res.writeHead(500);
+                res.end(JSON.stringify({ error: error.message }));
+              }
+            } else if (req.url === '/members') {
+              try {
+                const result = await libsql.execute('SELECT email, name, status FROM members');
+                res.writeHead(200);
+                res.end(JSON.stringify({
+                  creator: 'creator1', 
+                  members: result.rows
+                }));
+              } catch (error) {
+                res.writeHead(500);
+                res.end(JSON.stringify({ error: error.message }));
+              }
+            } else if (req.url === '/stats') {
+              try {
+                const posts = await libsql.execute('SELECT COUNT(*) as count FROM posts');
+                const members = await libsql.execute('SELECT COUNT(*) as count FROM members');
+                const paidMembers = await libsql.execute("SELECT COUNT(*) as count FROM members WHERE status='paid'");
+                
+                res.writeHead(200);
+                res.end(JSON.stringify({
+                  creator: 'creator1',
+                  stats: {
+                    posts: posts.rows[0].count,
+                    total_members: members.rows[0].count,
+                    paid_members: paidMembers.rows[0].count,
+                    revenue_estimate: paidMembers.rows[0].count * 10 // $10/month per paid member
+                  }
+                }));
+              } catch (error) {
+                res.writeHead(500);
+                res.end(JSON.stringify({ error: error.message }));
+              }
+            } else {
+              res.writeHead(404);
+              res.end(JSON.stringify({ error: 'Not found' }));
+            }
+          });
+          
+          server.listen(2368, '0.0.0.0', () => {
+            console.log('👻 Ghost-like server running on port 2368');
+            console.log('📊 Endpoints: /, /posts, /members, /stats');
+          });
+          EOF
+          
+          # Install libSQL client
+          echo "📦 Installing @libsql/client..."
+          npm init -y
+          npm install @libsql/client
+          
+          # Start the Ghost-like server
+          echo "🚀 Starting Ghost-like server..."
+          node server.js &
+          
+          # Keep container running and monitor both processes
+          echo "✅ Co-located Ghost + libSQL ready!"
+          echo "   Ghost-like API: http://localhost:2368"
+          echo "   libSQL API: http://localhost:8081" 
+          echo "   Creator: creator1"
+          
+          # Monitor processes
+          while true; do
+            if ! kill -0 $LIBSQL_PID 2>/dev/null; then
+              echo "❌ libSQL process died, restarting..."
+              sqld --http-listen-addr 0.0.0.0:8081 --db-path /app/data/creator1.db &
+              LIBSQL_PID=$!
+            fi
+            sleep 30
+          done
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 2368
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 2368
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ghost-creator1-test-service
+  namespace: ghost-multisite
+spec:
+  selector:
+    app: ghost-multisite-test
+    creator: creator1
+  ports:
+  - name: ghost-http
+    port: 2368
+    targetPort: 2368
+  - name: libsql-http
+    port: 8081
+    targetPort: 8081
+  type: LoadBalancer
